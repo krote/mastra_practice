@@ -66,7 +66,9 @@ export const confluenceSearchPageTool = createTool({
         const params = new URLSearchParams();
         params.append("cql", context.cql);
         try {
+            // API コール
             const data = await callConfluenceAPI(`/search?${params.toString()}`);
+            // 検索結果からページ一覧を作成
             const pages = data.results.map((result: any) => ({
                 id: result.content?.id,
                 title: result.content?.title,
@@ -77,5 +79,28 @@ export const confluenceSearchPageTool = createTool({
             return { pages: [], total: 0, error: String(error)};
         }
     },
+});
+
+// Confluenceページ詳細取得ツール
+export const confluenceGetPageTool = createTool({
+    id: "confluence-get-page",
+    description: "指定されたIDのConfluenceページの詳細を取得します",
+    inputSchema: z.object({
+        pageId: z.string().describe("取得するページのID"),
+        expand: z
+        .string()
+        // 設定してなくても良い者はoptionalを指定
+        .optional()
+        .describe("追加で取得する情報(body.storage, version, space)"),
+    }),
+    outputSchema: z.object({
+        page: z.object({
+            id: z.string().describe("ページのID"),
+            title: z.string().describe("ページのタイトル"),
+            url: z.string().describe("ページのURL"),
+            content: z.string().optional().describe("ページのコンテンツ（HTML形式）"),
+        }),
+        error: z.string().optional().describe("エラーメッセージ"),
+    }),
 });
 
