@@ -3,9 +3,9 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 
 // 環境変数からAPIキーなどを取得
-const CONFLUENCE_BASE_URL=process.env.CONFLUENCE_BASE_URL || "";
-const CONFLUENCE_API_TOKEN=process.env.CONFLUENCE_API_TOKEN || "";
-const CONFLUENCE_USER_EMAIL=process.env.CONFLUENCE_USER_EMAIL || "";
+const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_BASE_URL || "";
+const CONFLUENCE_API_TOKEN = process.env.CONFLUENCE_API_TOKEN || "";
+const CONFLUENCE_USER_EMAIL = process.env.CONFLUENCE_USER_EMAIL || "";
 
 function getAuthHeaders(): Record<string, string> {
     const auth = Buffer.from(
@@ -102,5 +102,29 @@ export const confluenceGetPageTool = createTool({
         }),
         error: z.string().optional().describe("エラーメッセージ"),
     }),
+    execute: async ({ context }) => {
+        // 入力パラメータからページIDと展開オプションを取得
+        const params = new URLSearchParams();
+        if(context.expand) params.append("expand", context.expand);
+
+        try {
+            const endpoint = `/content/${context.pageId}${params.toString() ? `?${params.toString()}` : ""}`;
+            // APIコール
+            const page = await callConfluenceAPI(endpoint);
+            return {
+                page: {
+                    id: page.id,
+                    title: page.title,
+                    url: `${CONFLUENCE_BASE_URL}/wiki${page._links?.webui}`,
+                    content: page.body?.storage?.value || undefined,
+                },
+            };
+        } catch (error) {
+            return {
+                error: String(error),
+                page: { id: '', title: '', url: '', content: undefined,}
+            };
+        }
+    },
 });
 
