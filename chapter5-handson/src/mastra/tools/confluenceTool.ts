@@ -1,6 +1,9 @@
 // 必要なモジュールをインポート
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 // 環境変数からAPIキーなどを取得
 const CONFLUENCE_BASE_URL = process.env.CONFLUENCE_BASE_URL || "";
