@@ -2,30 +2,35 @@ import { createWorkflow, createStep } from "@mastra/core/workflows";
 import { confluenceSearchPageTool, confluenceGetPageTool } from "../tools/confluenceTool";
 import { assistantAgent } from "../agents/assistantAgent";
 import { z } from "zod";
+import { githubCreateIssueTool } from "../tools/githubTool";
+import { parse } from "path";
 
 // ツールからステップ作成
 const confluenceSearchPagesStep = createStep(confluenceSearchPageTool);
 const confluenceGetPageStep = createStep(confluenceGetPageTool);
+const githubCreateIssueStep = createStep(githubCreateIssueTool);
 
 export const handsonworkflow = createWorkflow({
     id: "handsonworkflow",
-    description: "自然言語の質問からConfluenceで要件定義を検索し、内容を要約して回答します",
+    description: "自然言語の質問からConfluenceで要件定義を検索し、Github Issueとして開発バックログを自動作成します",
     inputSchema: z.object({
         query: z
         .string()
         .describe(
             "検索したい内容を自然言語で入力してください",
         ),
+        owner: z
+        .string()
+        .describe("Githubリポジトリの所有者名（ユーザ名）"),
+        repo: z.string().describe("Githubリポジトリ名"),
     }),
-    outputSchema: z.object({
-        text: z.string().describe("要約された回答"),
-    }),
+    outputSchema: githubCreateIssueTool.outputSchema,
 })
 .then(
     createStep({
         id: "generate-cql-query",
         inputSchema: z.object({
-            query: z.string(),
+            query: z.string(), owner: z.string(), repo: z.string(),
         }),
         outputSchema: z.object({ cql: z.string() }),
         execute: async ({ inputData }) => {
@@ -99,7 +104,7 @@ export const handsonworkflow = createWorkflow({
 )
 // Confluenceページを取得するステップを追加
 .then(confluenceGetPageStep)
-.then(
+/*.then(
     createStep({
         id:"prepare-prompt",
         inputSchema: z.object({
@@ -172,4 +177,82 @@ export const handsonworkflow = createWorkflow({
         },
     })
 )
+*/
+.then(
+    createStep({
+        id: "create-development-tasks",
+        inputSchema: confluenceGetPageTool.outputSchema,
+        outputSchema: githubCreateIssueTool.inputSchema,
+        execute: async( { inputData, getInitData }) => {
+            // 前のステップから受け渡されるConfluenceのページ情報
+            const { page, error } = inputData;
+            // Githubのリポジトリ情報はワークフローの初期データから取得
+            const { owner, repo, query } = getInitData();
+
+            // いずれかの情報が取れない場合はエラーメッセージを送信
+            if( error || !page || !page.content) {
+                return {
+                    owner: owner || "",
+                    repo: repo || "",
+                    issues: [
+                        {
+                            title: "エラー：ページの内容が取得できませんでした",
+                            body: "Confluenceページの内容を取得できませんでした",
+                        },
+                    ],
+                };
+            }
+            // エージェントからの出力フォーマットを規定
+            const outputSchema = z.object({
+                issues: z.array(
+                    z.object({
+                        title: z.string(),
+                        body: z.string(),
+                    })
+                ),
+            });
+            // プロンプト
+            const analysisPrompt = `以下のConfluenceページの内容は要件書です。この要件書を分析して、開発バックログのGithub Issueを複数作成するための情報を生成してください。
+            ユーザの質問: ${query}
+            ページタイトル: ${page.title}
+            ${page.content}
+            重要：
+            - 要件書の内容を機能やコンポーネント単位で分割
+            - 各Issueのtitleは簡潔でわかりやすく
+            - bodyはMarkdown形式で構造化
+            - フォーマットはJSON配列形式で、必ず出力。枕詞は不要。トップの配列は必ず各括弧で囲む。
+            - \'\'\'jsonのようなコードぷろっくは不要
+            - 2つIssueを作成
+            - 曖昧な部分は「要確認」として記載`;
+            try{
+                const result = await assistantAgent.generateVNext(analysisPrompt, {
+                    output: outputSchema, // エージェントからの出力フォーマットを指定
+                });
+                // JSONからIssueの配列を取り出す
+                const parseResult = JSON.parse(result.text);
+                const issues = parseResult.issues.map((issue: any) => ({
+                    title: issue.title,
+                    body: issue.body,
+                }));
+                return {
+                    owner: owner || "",
+                    repo: repo || "",
+                    issues: issues,
+                };
+            }catch(error){
+                return {
+                    owner: owner,
+                    repo: repo,
+                    issues: [
+                        {
+                            title: "エラー: Issue作成に失敗",
+                            body: "エラーが発生しました: " + String(error),
+                        },
+                    ],
+                };
+            }
+        },
+    })
+)
+.then(githubCreateIssueStep)
 .commit();
